@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rover Telemetry Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #161d2e;
+    --border: #26314a;
+    --text: #e6ebf5;
+    --muted: #8b96ad;
+    --accent: #4fd1c5;
+    --accent2: #f6ad55;
+    --danger: #fc8181;
+    --grid: #1f2942;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f6fb;
+    --panel: #ffffff;
+    --border: #dde3ef;
+    --text: #1a2233;
+    --muted: #64708a;
+    --accent: #0f9c8f;
+    --accent2: #c96f11;
+    --danger: #d64545;
+    --grid: #e9edf6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    transition: background 0.15s, color 0.15s;
+  }
+  header {
+    padding: 20px 28px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 {
+    font-size: 18px;
+    margin: 0;
+    font-weight: 600;
+  }
+  header .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 2px;
+  }
+  .controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  button, .file-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  button:hover, .file-btn:hover { border-color: var(--accent); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  input[type="file"] { display: none; }
+  #status {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 4px 10px;
+    border-radius: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+  }
+  #status.live { color: var(--accent); border-color: var(--accent); }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    padding: 20px 28px 0;
+  }
+  .stat {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+  }
+  .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    padding: 20px 28px 28px;
+  }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .chart-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .chart-panel h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); font-weight: 500; }
+  canvas { width: 100%; height: 220px; display: block; }
+  .empty {
+    padding: 60px 28px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .playback {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 20px 28px 0;
+    padding: 10px 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .playback input[type="range"] { flex: 1; }
+  .playback #scrubReadout {
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Rover Telemetry Dashboard</h1>
+    <div class="subtitle">Line-following rover — PID + sensor fusion visualization</div>
+  </div>
+  <div class="controls">
+    <span id="status">no data loaded</span>
+    <label class="file-btn" for="csvInput">Load CSV</label>
+    <input type="file" id="csvInput" accept=".csv">
+    <button id="connectSerial">Connect Arduino (Live)</button>
+    <button id="disconnectSerial" disabled>Disconnect</button>
+    <button id="themeToggle" title="Toggle light/dark theme">&#9789;</button>
+  </div>
+</header>
+
+<div class="stats" id="stats" style="display:none">
+  <div class="stat"><div class="label">Samples</div><div class="value" id="statSamples">0</div></div>
+  <div class="stat"><div class="label">Avg |error|</div><div class="value" id="statError">0</div></div>
+  <div class="stat"><div class="label">Min distance (cm)</div><div class="value" id="statDist">0</div></div>
+  <div class="stat"><div class="label">Max correction</div><div class="value" id="statCorrection">0</div></div>
+</div>
+
+<div class="playback" id="playback" style="display:none">
+  <button id="playPause">&#9654; Play</button>
+  <input type="range" id="scrub" min="0" max="0" value="0">
+  <span id="scrubReadout">t=0.00s  error=0.00  correction=0.00  dist=0.0cm</span>
+</div>
+
+<div id="emptyState" class="empty">
+  Load <code>simulation/telemetry.csv</code> from the Python simulation, or connect directly to the
+  Arduino over Web Serial to view live PID / sensor-fusion telemetry.
+</div>
+
+<div class="grid" id="chartGrid" style="display:none">
+  <div class="chart-panel">
+    <h2>Trajectory (x, y) vs. track</h2>
+    <canvas id="chartTrajectory"></canvas>
+  </div>
+  <div class="chart-panel">
+    <h2>Line error over time</h2>
+    <canvas id="chartError"></canvas>
+  </div>
+  <div class="chart-panel">
+    <h2>PID correction (steering output)</h2>
+    <canvas id="chartCorrection"></canvas>
+  </div>
+  <div class="chart-panel">
+    <h2>Ultrasonic distance / speed cap</h2>
+    <canvas id="chartDistance"></canvas>
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------
+// Minimal dependency-free line-chart renderer (Canvas 2D).
+// ---------------------------------------------------------------------
+function drawLineChart(canvas, series, opts = {}) {
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const pad = { l: 40, r: 12, t: 10, b: 22 };
+  const plotW = W - pad.l - pad.r;
+  const plotH = H - pad.t - pad.b;
+
+  let allX = [], allY = [];
+  series.forEach(s => { s.points.forEach(p => { allX.push(p.x); allY.push(p.y); }); });
+  if (allX.length === 0) return;
+
+  const xMin = Math.min(...allX), xMax = Math.max(...allX);
+  let yMin = opts.yMin ?? Math.min(...allY);
+  let yMax = opts.yMax ?? Math.max(...allY);
+  if (yMin === yMax) { yMin -= 1; yMax += 1; }
+  const yPad = (yMax - yMin) * 0.08;
+  yMin -= yPad; yMax += yPad;
+
+  const sx = x => pad.l + ((x - xMin) / (xMax - xMin || 1)) * plotW;
+  const sy = y => pad.t + plotH - ((y - yMin) / (yMax - yMin || 1)) * plotH;
+
+  const rootStyle = getComputedStyle(document.documentElement);
+  const gridColor = rootStyle.getPropertyValue('--grid').trim() || '#1f2942';
+  const mutedColor = rootStyle.getPropertyValue('--muted').trim() || '#8b96ad';
+  const textColor = rootStyle.getPropertyValue('--text').trim() || '#e6ebf5';
+
+  // grid
+  ctx.strokeStyle = gridColor;
+  ctx.lineWidth = 1;
+  ctx.font = '10px sans-serif';
+  ctx.fillStyle = mutedColor;
+  const gridLines = 4;
+  for (let i = 0; i <= gridLines; i++) {
+    const yv = yMin + (yMax - yMin) * (i / gridLines);
+    const py = sy(yv);
+    ctx.beginPath();
+    ctx.moveTo(pad.l, py);
+    ctx.lineTo(W - pad.r, py);
+    ctx.stroke();
+    ctx.fillText(yv.toFixed(1), 2, py + 3);
+  }
+
+  // threshold lines
+  (opts.thresholds || []).forEach(t => {
+    ctx.strokeStyle = t.color;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(pad.l, sy(t.value));
+    ctx.lineTo(W - pad.r, sy(t.value));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
+  // series
+  series.forEach(s => {
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    s.points.forEach((p, i) => {
+      const px = sx(p.x), py = sy(p.y);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    if (s.dashed) {
+      // already drawn solid above; skip separate dashed handling for simplicity
+    }
+  });
+
+  // playback cursor
+  if (opts.cursorX !== undefined && opts.cursorX !== null) {
+    const cx = sx(opts.cursorX);
+    ctx.strokeStyle = opts.cursorColor || '#f6ad55';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.moveTo(cx, pad.t);
+    ctx.lineTo(cx, pad.t + plotH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // legend
+  let lx = pad.l;
+  series.forEach(s => {
+    ctx.fillStyle = s.color;
+    ctx.fillRect(lx, H - 12, 8, 8);
+    ctx.fillStyle = textColor;
+    ctx.fillText(s.label, lx + 12, H - 4);
+    lx += ctx.measureText(s.label).width + 34;
+  });
+}
+
+// ---------------------------------------------------------------------
+// Data handling
+// ---------------------------------------------------------------------
+let telemetry = []; // array of row objects
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  const headers = lines[0].split(',').map(h => h.trim());
+  return lines.slice(1).filter(l => l.length).map(line => {
+    const vals = line.split(',');
+    const row = {};
+    headers.forEach((h, i) => { row[h] = parseFloat(vals[i]); });
+    return row;
+  });
+}
+
+let cursorIndex = 0;
+
+function renderAll() {
+  if (telemetry.length === 0) return;
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('chartGrid').style.display = 'grid';
+  document.getElementById('stats').style.display = 'grid';
+  document.getElementById('playback').style.display = 'flex';
+
+  const hasSimFields = 'track_y' in telemetry[0];
+
+  // Stats
+  const errors = telemetry.map(r => Math.abs(r.error ?? 0));
+  const avgErr = errors.reduce((a, b) => a + b, 0) / errors.length;
+  const distances = telemetry.map(r => r.distance_cm ?? Infinity);
+  const minDist = Math.min(...distances);
+  const corrections = telemetry.map(r => Math.abs(r.correction ?? 0));
+  const maxCorr = Math.max(...corrections);
+
+  document.getElementById('statSamples').textContent = telemetry.length;
+  document.getElementById('statError').textContent = avgErr.toFixed(3);
+  document.getElementById('statDist').textContent = isFinite(minDist) ? minDist.toFixed(1) : '—';
+  document.getElementById('statCorrection').textContent = maxCorr.toFixed(1);
+
+  const tKey = 't' in telemetry[0] ? 't' : 'time';
+  const timeVals = telemetry.map((r, i) => (r[tKey] !== undefined ? r[tKey] : i));
+
+  const scrub = document.getElementById('scrub');
+  scrub.max = telemetry.length - 1;
+  if (cursorIndex > telemetry.length - 1) cursorIndex = telemetry.length - 1;
+  scrub.value = cursorIndex;
+
+  const cur = telemetry[cursorIndex];
+  const cursorTimeX = timeVals[cursorIndex];
+  const cursorTrajX = hasSimFields ? cur.x : cursorTimeX;
+
+  document.getElementById('scrubReadout').textContent =
+    `t=${cursorTimeX.toFixed(2)}s  error=${(cur.error ?? 0).toFixed(2)}  ` +
+    `correction=${(cur.correction ?? 0).toFixed(1)}  dist=${(cur.distance_cm ?? 0).toFixed(1)}cm`;
+
+  // Trajectory
+  if (hasSimFields) {
+    drawLineChart(document.getElementById('chartTrajectory'), [
+      { label: 'track', color: '#8b96ad', points: telemetry.map(r => ({ x: r.x, y: r.track_y })) },
+      { label: 'rover', color: '#4fd1c5', points: telemetry.map(r => ({ x: r.x, y: r.y })) },
+    ], { cursorX: cursorTrajX });
+  } else {
+    drawLineChart(document.getElementById('chartTrajectory'), [
+      { label: 'error (proxy for position)', color: '#4fd1c5',
+        points: telemetry.map((r, i) => ({ x: timeVals[i], y: r.error })) },
+    ], { cursorX: cursorTrajX });
+  }
+
+  drawLineChart(document.getElementById('chartError'), [
+    { label: 'error', color: '#f6ad55', points: telemetry.map((r, i) => ({ x: timeVals[i], y: r.error })) },
+  ], { cursorX: cursorTimeX });
+
+  drawLineChart(document.getElementById('chartCorrection'), [
+    { label: 'correction', color: '#4fd1c5', points: telemetry.map((r, i) => ({ x: timeVals[i], y: r.correction })) },
+  ], { cursorX: cursorTimeX });
+
+  drawLineChart(document.getElementById('chartDistance'), [
+    { label: 'distance (cm)', color: '#fc8181', points: telemetry.map((r, i) => ({ x: timeVals[i], y: r.distance_cm })) },
+  ], { thresholds: [
+      { value: 25, color: '#f6ad55' },
+      { value: 8, color: '#fc8181' },
+  ], cursorX: cursorTimeX });
+}
+
+document.getElementById('csvInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    telemetry = parseCSV(reader.result);
+    cursorIndex = 0;
+    document.getElementById('status').textContent = `loaded ${file.name} (${telemetry.length} rows)`;
+    document.getElementById('status').classList.remove('live');
+    renderAll();
+  };
+  reader.readAsText(file);
+});
+
+window.addEventListener('resize', () => { if (telemetry.length) renderAll(); });
+
+// ---------------------------------------------------------------------
+// Theme toggle
+// ---------------------------------------------------------------------
+const themeToggleBtn = document.getElementById('themeToggle');
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  themeToggleBtn.innerHTML = theme === 'light' ? '&#9728;' : '&#9789;';
+  localStorage.setItem('rover-dashboard-theme', theme);
+  if (telemetry.length) renderAll();
+}
+themeToggleBtn.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(current === 'light' ? 'dark' : 'light');
+});
+applyTheme(localStorage.getItem('rover-dashboard-theme') || 'dark');
+
+// ---------------------------------------------------------------------
+// Playback controls (scrub + play/pause)
+// ---------------------------------------------------------------------
+let playing = false;
+let playTimer = null;
+
+document.getElementById('scrub').addEventListener('input', (e) => {
+  cursorIndex = parseInt(e.target.value, 10);
+  renderAll();
+});
+
+document.getElementById('playPause').addEventListener('click', () => {
+  playing = !playing;
+  const btn = document.getElementById('playPause');
+  if (playing) {
+    btn.innerHTML = '&#10074;&#10074; Pause';
+    if (cursorIndex >= telemetry.length - 1) cursorIndex = 0;
+    playTimer = setInterval(() => {
+      if (cursorIndex >= telemetry.length - 1) {
+        cursorIndex = telemetry.length - 1;
+        playing = false;
+        btn.innerHTML = '&#9654; Play';
+        clearInterval(playTimer);
+      } else {
+        cursorIndex++;
+      }
+      renderAll();
+    }, 30);
+  } else {
+    btn.innerHTML = '&#9654; Play';
+    clearInterval(playTimer);
+  }
+});
+
+// ---------------------------------------------------------------------
+// Live mode via Web Serial API (matches firmware's CSV telemetry line:
+// time,error,correction,distance,speedCap)
+// ---------------------------------------------------------------------
+let serialPort = null;
+let serialReader = null;
+let keepReading = false;
+
+async function connectSerial() {
+  if (!('serial' in navigator)) {
+    alert('Web Serial API not supported in this browser. Use Chrome/Edge, or load a CSV file instead.');
+    return;
+  }
+  try {
+    serialPort = await navigator.serial.requestPort();
+    await serialPort.open({ baudRate: 115200 });
+    keepReading = true;
+    telemetry = [];
+    cursorIndex = 0;
+    document.getElementById('status').textContent = 'live: connected';
+    document.getElementById('status').classList.add('live');
+    document.getElementById('connectSerial').disabled = true;
+    document.getElementById('disconnectSerial').disabled = false;
+    readSerialLoop();
+  } catch (err) {
+    console.error(err);
+    document.getElementById('status').textContent = 'connection failed';
+  }
+}
+
+async function readSerialLoop() {
+  const textDecoder = new TextDecoderStream();
+  const readableClosed = serialPort.readable.pipeTo(textDecoder.writable);
+  serialReader = textDecoder.readable.getReader();
+  let buffer = '';
+
+  try {
+    while (keepReading) {
+      const { value, done } = await serialReader.read();
+      if (done) break;
+      buffer += value;
+      let lines = buffer.split('\n');
+      buffer = lines.pop();
+      lines.forEach(line => {
+        const parts = line.trim().split(',');
+        if (parts.length === 5) {
+          const [time, error, correction, distance, speedCap] = parts.map(Number);
+          if (!Number.isNaN(error)) {
+            telemetry.push({ t: time / 1000, error, correction, distance_cm: distance, speed_cap: speedCap });
+            if (telemetry.length > 2000) telemetry.shift();
+          }
+        }
+      });
+      cursorIndex = telemetry.length - 1; // live mode: cursor tracks latest sample
+      renderAll();
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    serialReader.releaseLock();
+  }
+}
+
+async function disconnectSerial() {
+  keepReading = false;
+  if (serialReader) { try { await serialReader.cancel(); } catch (e) {} }
+  if (serialPort) { try { await serialPort.close(); } catch (e) {} }
+  document.getElementById('status').textContent = 'disconnected';
+  document.getElementById('status').classList.remove('live');
+  document.getElementById('connectSerial').disabled = false;
+  document.getElementById('disconnectSerial').disabled = true;
+}
+
+document.getElementById('connectSerial').addEventListener('click', connectSerial);
+document.getElementById('disconnectSerial').addEventListener('click', disconnectSerial);
+</script>
+
+</body>
+</html>
