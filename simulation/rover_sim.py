@@ -62,13 +62,20 @@ class PID:
     integral: float = 0.0
     last_error: float = 0.0
     integral_limit: float = 50.0
+    output_limit: float = 120.0
+    derivative_filter_alpha: float = 0.25   # low-pass on the D term to reject noise-driven "derivative kick"
+    filtered_derivative: float = 0.0
 
     def update(self, error: float, dt: float) -> float:
         self.integral += error * dt
         self.integral = max(-self.integral_limit, min(self.integral_limit, self.integral))
-        derivative = (error - self.last_error) / dt if dt > 0 else 0.0
+
+        raw_derivative = (error - self.last_error) / dt if dt > 0 else 0.0
+        self.filtered_derivative = ema(self.filtered_derivative, raw_derivative, self.derivative_filter_alpha)
         self.last_error = error
-        return self.kp * error + self.ki * self.integral + self.kd * derivative
+
+        output = self.kp * error + self.ki * self.integral + self.kd * self.filtered_derivative
+        return max(-self.output_limit, min(self.output_limit, output))
 
 
 def ema(prev: float, sample: float, alpha: float) -> float:
@@ -114,7 +121,7 @@ def read_ultrasonic(rover_x, rover_y, noise_std=0.4):
 class SimConfig:
     kp: float = 34.0
     ki: float = 0.6
-    kd: float = 7.0
+    kd: float = 9.5
     base_speed: float = 30.0       # mm per step "speed units"
     dt: float = 0.02
     steps: int = 1200
@@ -238,6 +245,7 @@ def rmse_from_track(log):
 
 
 if __name__ == "__main__":
+    random.seed(42)  # reproducible output; change/remove to sample different noise realizations
     cfg = SimConfig()
     log = run_simulation(cfg)
     save_csv(log, "telemetry.csv")

@@ -31,7 +31,7 @@ const uint8_t IN4_PIN      = 2;
 // ---------- Tuning constants (derived from MATLAB/Python sim) ----------
 float KP = 34.0f;
 float KI = 0.6f;
-float KD = 7.0f;
+float KD = 9.5f;
 
 const int   BASE_SPEED     = 150;   // 0-255 PWM
 const int   MAX_SPEED      = 255;
@@ -39,6 +39,8 @@ const int   MIN_SPEED      = 0;
 
 const float IR_EMA_ALPHA   = 0.35f; // higher = less smoothing, faster response
 const float US_EMA_ALPHA   = 0.25f;
+const float D_FILTER_ALPHA = 0.25f; // low-pass on the derivative term, rejects noise-driven "derivative kick"
+const float PID_OUTPUT_LIMIT = 120.0f; // clamp steering correction to prevent single-step overcorrection
 
 const float OBSTACLE_SLOW_CM  = 25.0f; // start slowing below this distance
 const float OBSTACLE_STOP_CM  = 8.0f;  // stop below this distance
@@ -49,6 +51,7 @@ float irFiltered[5] = {0, 0, 0, 0, 0};
 float lineError     = 0.0f;
 float lastError      = 0.0f;
 float integral        = 0.0f;
+float filteredDerivative = 0.0f;
 
 float ultrasonicFiltered = 100.0f; // start "far away"
 
@@ -149,10 +152,12 @@ float computePID(float error, float dt) {
   integral += error * dt;
   integral = constrain(integral, -50.0f, 50.0f); // anti-windup clamp
 
-  float derivative = (dt > 0) ? (error - lastError) / dt : 0.0f;
+  float rawDerivative = (dt > 0) ? (error - lastError) / dt : 0.0f;
+  filteredDerivative = emaFilter(filteredDerivative, rawDerivative, D_FILTER_ALPHA);
   lastError = error;
 
-  return (KP * error) + (KI * integral) + (KD * derivative);
+  float output = (KP * error) + (KI * integral) + (KD * filteredDerivative);
+  return constrain(output, -PID_OUTPUT_LIMIT, PID_OUTPUT_LIMIT);
 }
 
 // Sensor fusion: ultrasonic reading gates the maximum allowed speed,
