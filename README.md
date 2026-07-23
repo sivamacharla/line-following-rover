@@ -13,6 +13,9 @@ live over serial).
 line-following-rover/
 ├── firmware/
 │   └── rover_firmware.ino   # Arduino C++ firmware: PID + sensor fusion + motor control
+├── firmware-stm32/
+│   ├── README.md            # CubeMX pin/peripheral config + build steps
+│   └── Core/                # HAL port for NUCLEO-F401RE (drop into a CubeIDE project)
 ├── simulation/
 │   ├── rover_sim.py         # Physics + sensor-noise simulation, generates telemetry.csv + plots.png
 │   ├── tune_pid.py          # Grid-search PID tuning against the simulation
@@ -75,3 +78,11 @@ Open `dashboard/index.html` in a browser (Chrome/Edge recommended):
 | Right motor IN3/IN4  | D7 / D2 |
 
 Adjust pins in `rover_firmware.ino` to match your driver board.
+
+## STM32 Nucleo-F401RE port
+
+`firmware-stm32/` has an HAL-based port of the same control logic for the
+NUCLEO-F401RE — see [`firmware-stm32/README.md`](firmware-stm32/README.md)
+for the CubeMX pin/peripheral configuration and build steps. It hasn't been
+build-verified (no ARM toolchain in the environment it was written in), so
+expect to fix compiler errors on first build against your generated project.
